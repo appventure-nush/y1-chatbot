@@ -4,3 +4,4 @@ msal
 selenium
 Pillow
 requests
+msal-streamlit-authentication

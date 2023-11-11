@@ -6,8 +6,14 @@ import requests
 from PIL import Image
 import io
 import urllib.request
+from msal_streamlit_authentication import msal_authentication
+import mimetypes 
+import os
 
-# openai.api_key = st.secrets["OPENAI_API_KEY"]
+mimetypes.add_type('application/javascript', '.js') 
+mimetypes.add_type('text/css', '.css')
+
+openai.api_key = os.environ["key"]
 
 st.set_page_config(page_title="NUSHChat")
 
@@ -18,70 +24,48 @@ scopes = ["profile"]
 authority = f"https://login.microsoftonline.com/{tenant_id}"
 endpoint = "https://graph.microsoft.com/v1.0/me"
 
-app = msal.PublicClientApplication(
-    client_id, authority=authority
-)
+os.environ['ENABLED'] = ""
+
 
 token = None
 temp = 0.0
 
-def get_token_from_cache():
-    accounts = app.get_accounts()
-    if not accounts:
-        return None
-    
-    result = app.acquire_token_silent(scopes, account=accounts[0])
-    if "access_token" in result:
-        return result["access_token"]
-    else:
-        return None
-
-def login():
-    flow = app.initiate_auth_code_flow(scopes=scopes, state=['todo'])
-    
-    if "auth_uri" not in flow:
-        return st.write("Failed with token")
-    
-    auth_uri = flow['auth_uri']
-    webbrowser.open(auth_uri, new=0)
-    auth_code = st.experimental_get_query_params()
-    
-    if 'code' not in auth_code:
-        return st.write("Failed with token")
-    
-    result = app.acquire_token_by_authorization_code(auth_code, scopes=scopes)
-    if "access_token" in result:
-        return result["access_token"]
-    else:
-        return st.write("No token found")
-    
-st.markdown(
-        """
-       <style>
-       [data-testid="stSidebar"][aria-expanded="true"]{
-           min-width: 200px;
-           max-width: 200px;
-       }
-       """,
-        unsafe_allow_html=True,
-    )   
-
 with st.sidebar:
-    col1, col2, col3 = st.columns([0.4,1,0.4])
-    if col2.button("Login", type="primary"):
-        get_token_from_cache()
-        token = login()
-
-        st.write(st.experimental_get_query_params())
-        if token:
-            st.write("Logged in successfully!")
-            st.write(token)
-        else:
-            st.write("Failed to login")  
     
-    st.text("")
-    st.text("")
-    temp = st.slider('Temperature', 0.0, 1.0, 0.0)
+    token = msal_authentication(
+        auth={
+            "clientId": client_id,
+            "authority": authority,
+            "redirectUri": redirect_uri,
+            "postLogoutRedirectUri": redirect_uri
+        }, # Corresponds to the 'auth' configuration for an MSAL Instance
+        cache={
+            "cacheLocation": "sessionStorage",
+            "storeAuthStateInCookie": False
+        }, # Corresponds to the 'cache' configuration for an MSAL Instance
+        login_request={
+            "scopes": ["user.read"]
+        }, # Optional
+        logout_request={}, # Optional
+        login_button_text="Login", # Optional, defaults to "Login"
+        logout_button_text="Logout", # Optional, defaults to "Logout"
+        class_name="css_button_class_selector", # Optional, defaults to None. Corresponds to HTML class.
+        html_id="html_id_for_button", # Optional, defaults to None. Corresponds to HTML id.
+    )
+    if (token):
+        if (True or token['idTokenClaims']['preferred_username'].split('@')[-1].strip() in ["nushigh.edu.sg","nus.edu.sg"] and token['idTokenClaims']['preferred_username'][:3] in "anhs"):
+            on = st.toggle('Activate Chat', value=os.environ['ENABLED'])
+            
+            if on:
+                os.environ['ENABLED']  = "1"
+            else:
+                os.environ['ENABLED']  = ""
+        token = True if (token['idTokenClaims']['preferred_username'].split('@')[-1].strip() in ["nushigh.edu.sg","nus.edu.sg"]) else False
+        st.text("")
+        st.text("")
+        temp = st.slider('Temperature', 0.0, 1.0, 0.0)
+
+    
 
 st.session_state["openai_model"] = "gpt-3.5-turbo"
 if "messages" not in st.session_state.keys():
@@ -92,7 +76,7 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
 
-if prompt := st.chat_input("Your Input (Use /image for image creation)", disabled=not (token)): 
+if prompt := st.chat_input("Your Input (Use /image for image creation)", disabled=not (token and os.environ['ENABLED'])): 
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -102,21 +86,21 @@ if prompt := st.chat_input("Your Input (Use /image for image creation)", disable
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         if (prompt.split(" ")[0] == "/image"):
-            full_response = "https://wallpapers.com/images/featured-full/batman-pictures-ldrww5lw9rhd7hyo.jpg"#openai.Image.create(prompt=" ".join(prompt.split(" ")[1:]), n=1, size="512x512")["data"][0]["url"]
+            full_response = openai.Image.create(prompt=" ".join(prompt.split(" ")[1:]), n=1, size="512x512")["data"][0]["url"]
             with urllib.request.urlopen(full_response) as response:
                 st.image(Image.open(response))
         else:
-        #     full_response = ""
-        #     for response in openai.ChatCompletion.create(
-        #         model=st.session_state["openai_model"],
-        #         messages=[
-        #             {"role": m["role"], "content": m["content"]}
-        #             for m in st.session_state.messages
-        #         ],
-        #         stream=True,
-        #     ):
-        #         full_response += response.choices[0].delta.get("content", "")
-                # message_placeholder.markdown(full_response + "▌")
+            full_response = ""
+            for response in openai.ChatCompletion.create(
+                model=st.session_state["openai_model"],
+                messages=[
+                    {"role": m["role"], "content": m["content"]}
+                    for m in st.session_state.messages
+                ],
+                stream=True,
+            ):
+                full_response += response.choices[0].delta.get("content", "")
+                message_placeholder.markdown(full_response + "▌")
             message_placeholder.markdown(full_response)
     st.session_state.messages.append({"role": "assistant", "content": full_response})
 
